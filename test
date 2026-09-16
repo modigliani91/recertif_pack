@@ -1,0 +1,74 @@
+# =========================================================================
+# CELL 27 — PROMPTS  (task-specific, compact, JSON only)
+# =========================================================================
+# Anti-hallucination protections are unchanged; the instructions are simply not restated at
+# length in every request. No null-filled template is ever shown -- handing the model
+# {"value": null, "confidence": "unreadable"} as the required shape makes copying the failure
+# answer a valid, zero-risk completion.
+OCR_SYSTEM = """You are a visual transcription engine. The image is the only source of truth.
+Read only what is visible. Do not guess, infer, reconstruct, correct, translate or transliterate. Never use external knowledge, a database, or another document.
+Latin fields: transcribe only Latin characters actually on this image.
+Mark a single unreadable character with ?. If a value cannot be read at all, use null.
+JSON only. No explanation, no reasoning, no repetition."""
+
+IDENTITY_KEYS = [f for f in IDENTITY_FIELDS if f != "mrz"]
+
+
+def identity_page_prompt(fields: Optional[Sequence[str]] = None, with_title: bool = True) -> str:
+    """ONE call per page: document type, printed heading and every identity field together.
+
+    The previous version spent one call on the heading, one on line transcription and one on the
+    schema, per page. Merging them removes two multimodal prefills per page at no measurable cost
+    to reliability: the model looks at the same pixels once and answers one structured question."""
+    fields = list(fields or IDENTITY_KEYS)
+    keys = ", ".join(f'"{f}"' for f in fields)
+    title = ('\n"document_title": the printed heading text, transcribed exactly as written.'
+             if with_title else "")
+    # Precompute the example fragment to avoid backslash inside an f-string expression
+    title_example = ',\n "document_title": {"value": "PASSEPORT", "confidence": "high"}' if with_title else ''
+    return f"""Read this identity document page. Report: {keys}.{title}
+
+Each field maps to {{"value": ..., "confidence": "high|medium|low|unreadable"}} where confidence describes how clearly you SEE the characters.
+
+Example of the shape (use values from THIS image):
+{{"surname_latin": {{"value": "BEN ALI", "confidence": "high"}},
+ "date_of_birth": {{"value": "01.01.1980", "confidence": "high"}},
+ "document_number": {{"value": "12AB4?678", "confidence": "low"}}{title_example}}}
+
+A field absent from this page gets value null. JSON only."""
+
+
+LINES_PROMPT = """Transcribe every line of text you can see, in reading order.
+
+Return: {"lines": ["REPUBLIQUE FRANCAISE", "Nom: BEN ALI", "..."]}
+
+Copy each line exactly, including labels. Use ? for a character you cannot read. Do not translate, reorder or summarise. JSON only."""
+
+MRZ_PROMPT = """This image is the machine readable zone of an identity document, cropped and enlarged. Read ONLY this region.
+
+Transcribe the lines exactly: preserve every <, the character order and the line order. No spaces. Do not repair; check digits must NOT decide an unclear character. Mark an unreadable character with ?.
+
+Return: {"mrz": {"value": "P<UTOBEN ALI<<...", "confidence": "high"}}"""
+
+
+def secondary_document_prompt(handwritten: bool = False, with_title: bool = True) -> str:
+    """ONE call per secondary document: heading verification and the client name together."""
+    hw = (" The name is HANDWRITTEN: read the strokes letter by letter, mark unreadable letters "
+          "with ?.") if handwritten else ""
+    title = ',\n "document_title": {"value": "CONVENTION DE COMPTE", "confidence": "high"}' \
+        if with_title else ""
+    return f"""Read the client's surname and given names from this document image.{hw}
+
+Return: {{"surname_latin": {{"value": "BEN ALI", "confidence": "high", "text_type": "handwritten"}},
+ "given_names_latin": {{"value": "MOHAMED", "confidence": "medium", "text_type": "handwritten"}}{title}}}
+
+with the values from THIS image. Only Latin characters actually visible here; no transliteration, no spelling correction, no other document. JSON only."""
+
+
+TITLE_PROMPT = """Transcribe the printed heading at the top of this image.
+
+Return: {"document_title": {"value": "SPICIMEN DE SIGNATURE", "confidence": "high"}}
+
+Copy it exactly, including unusual spelling. Do not translate or correct. JSON only."""
+
+print("CELL 27 ready: compact task-specific prompts")
